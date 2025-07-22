@@ -14,8 +14,10 @@ export interface CompleteContext {
 }
 
 export class ContextBuilder {
+  private analyzer: ProjectAnalyzer;
+
   constructor() {
-    // Constructor
+    this.analyzer = new ProjectAnalyzer();
   }
 
   async buildCompleteContext(options: {
@@ -32,75 +34,315 @@ export class ContextBuilder {
     compressionLevel: string;
     tokenCount: number;
   }> {
-    // For now, return a minimal implementation with expected structure
-    // This will need to be implemented based on the project's requirements
-    return {
-      formattedContext: `# Project Context for: ${options.query}\n\n*This is a minimal implementation that needs to be expanded.*`,
-      metadata: {
-        totalFiles: 0,
+    try {
+      console.error(`[ContextBuilder] Building context for query: "${options.query}"`);
+      console.error(`[ContextBuilder] Project root: ${options.projectRoot}`);
+
+      // Step 1: Index the project
+      await this.analyzer.indexProject(options.projectRoot);
+      const stats = await this.analyzer.getIndexStats();
+      console.error(`[ContextBuilder] Indexed ${stats.filesIndexed} files`);
+
+      // Step 2: Get all files and analyze them
+      const allFiles = this.analyzer.getAllFiles();
+      console.error(`[ContextBuilder] Retrieved ${allFiles.length} files from cache`);
+
+      // Step 3: Filter relevant files based on query and scope
+      const relevantFiles = this.findRelevantFiles(allFiles, options.query, options.scope);
+      console.error(`[ContextBuilder] Found ${relevantFiles.length} relevant files`);
+
+      // Step 4: Build dependency graph
+      const dependencyGraph = await this.buildDependencyGraph(relevantFiles);
+      
+      // Step 5: Analyze usage patterns
+      const usagePatterns = this.analyzeUsagePatterns(allFiles, relevantFiles);
+
+      // Step 6: Format the complete context
+      const formattedContext = await this.formatContextForFiles(relevantFiles, dependencyGraph, usagePatterns, options.query);
+
+      // Step 7: Calculate metadata
+      const totalLines = relevantFiles.reduce((sum, f) => sum + f.content.split('\n').length, 0);
+      const totalFunctions = relevantFiles.reduce((sum, f) => sum + f.functions.length, 0);
+      const totalClasses = relevantFiles.reduce((sum, f) => sum + f.classes.length, 0);
+      
+      // Detect primary language
+      const languageCount: Record<string, number> = {};
+      relevantFiles.forEach(f => {
+        languageCount[f.language] = (languageCount[f.language] || 0) + 1;
+      });
+      const primaryLanguage = Object.entries(languageCount).reduce((a, b) => 
+        languageCount[a[0]] > languageCount[b[0]] ? a : b
+      )[0] || 'typescript';
+
+      const estimatedTokens = this.estimateTokenCount(formattedContext);
+      
+      // Step 8: Apply compression if needed
+      let finalContext = formattedContext;
+      let compressionLevel = options.completeness || 'full';
+      
+      if (options.maxTokens && estimatedTokens > options.maxTokens) {
+        console.error(`[ContextBuilder] Context too large (${estimatedTokens} tokens), applying compression`);
+        finalContext = await this.intelligentCompression(formattedContext, options.maxTokens);
+        compressionLevel = 'compressed';
+      }
+
+      const finalTokenCount = this.estimateTokenCount(finalContext);
+      console.error(`[ContextBuilder] Final context: ${finalTokenCount} tokens, ${relevantFiles.length} files`);
+
+      return {
+        formattedContext: finalContext,
+        metadata: {
+          totalFiles: relevantFiles.length,
+          totalLines,
+          totalFunctions,
+          totalClasses,
+          primaryLanguage,
+          estimatedTokens: finalTokenCount
+        },
+        summary: this.generateContextSummary(relevantFiles, dependencyGraph, usagePatterns),
+        dependencyGraph,
+        usagePatterns,
+        filesIncluded: relevantFiles.map(f => f.relativePath),
+        totalLines,
+        compressionLevel,
+        tokenCount: finalTokenCount
+      };
+
+    } catch (error) {
+      console.error('[ContextBuilder] Error building context:', error);
+      
+      // Fallback response
+      return {
+        formattedContext: `# Error Building Context\n\nAn error occurred while building context for query: "${options.query}"\n\nError: ${error instanceof Error ? error.message : String(error)}\n\nPlease check the project path and try again.`,
+        metadata: {
+          totalFiles: 0,
+          totalLines: 0,
+          totalFunctions: 0,
+          totalClasses: 0,
+          primaryLanguage: 'unknown',
+          estimatedTokens: 50
+        },
+        summary: 'Error occurred during context building',
+        dependencyGraph: { nodes: [], edges: [] },
+        usagePatterns: { patterns: [] },
+        filesIncluded: [],
         totalLines: 0,
-        totalFunctions: 0,
-        totalClasses: 0,
-        primaryLanguage: 'typescript',
-        estimatedTokens: 100
-      },
-      summary: `Context for query: ${options.query}`,
-      dependencyGraph: { nodes: [], edges: [] },
-      usagePatterns: { patterns: [] },
-      filesIncluded: [],
-      totalLines: 0,
-      compressionLevel: options.completeness || 'full',
-      tokenCount: 100
+        compressionLevel: 'error',
+        tokenCount: 50
+      };
+    }
+  }
+
+  private findRelevantFiles(allFiles: FileInfo[], query: string, scope?: string): FileInfo[] {
+    const queryLower = query.toLowerCase();
+    const keywords = queryLower.split(/\s+/).filter(word => word.length > 2);
+    
+    console.error(`[ContextBuilder] Searching for keywords: ${keywords.join(', ')}`);
+
+    let relevantFiles = allFiles.filter(file => {
+      // Skip non-code files for most queries
+      if (!['typescript', 'javascript'].includes(file.language)) {
+        return false;
+      }
+
+      const fileName = file.relativePath.toLowerCase();
+      const fileContent = file.content.toLowerCase();
+      
+      // Check filename matches
+      const fileNameMatches = keywords.some(keyword => 
+        fileName.includes(keyword) || 
+        file.functions.some(fn => fn.name.toLowerCase().includes(keyword)) ||
+        file.classes.some(cls => cls.name.toLowerCase().includes(keyword))
+      );
+
+      // Check content matches for key programming concepts
+      const contentMatches = keywords.some(keyword => 
+        fileContent.includes(keyword) ||
+        file.imports.some(imp => imp.path.toLowerCase().includes(keyword))
+      );
+
+      return fileNameMatches || contentMatches;
+    });
+
+    // If no specific matches, include main files based on scope
+    if (relevantFiles.length === 0) {
+      console.error('[ContextBuilder] No specific matches found, including main files');
+      relevantFiles = allFiles.filter(file => {
+        const fileName = file.relativePath.toLowerCase();
+        return ['typescript', 'javascript'].includes(file.language) && 
+               (fileName.includes('index') || fileName.includes('main') || 
+                file.functions.length > 0 || file.classes.length > 0);
+      }).slice(0, 10); // Limit to first 10 files
+    }
+
+    // Apply scope filtering
+    if (scope === 'function') {
+      relevantFiles = relevantFiles.filter(f => f.functions.length > 0);
+    } else if (scope === 'class') {
+      relevantFiles = relevantFiles.filter(f => f.classes.length > 0);
+    }
+
+    // Sort by relevance (files with more matches first)
+    relevantFiles.sort((a, b) => {
+      const aScore = this.calculateRelevanceScore(a, keywords);
+      const bScore = this.calculateRelevanceScore(b, keywords);
+      return bScore - aScore;
+    });
+
+    console.error(`[ContextBuilder] Selected ${relevantFiles.length} relevant files`);
+    return relevantFiles.slice(0, 20); // Limit to top 20 most relevant files
+  }
+
+  private calculateRelevanceScore(file: FileInfo, keywords: string[]): number {
+    let score = 0;
+    const fileName = file.relativePath.toLowerCase();
+    const content = file.content.toLowerCase();
+
+    keywords.forEach(keyword => {
+      // Filename matches (high priority)
+      if (fileName.includes(keyword)) score += 10;
+      
+      // Function/class name matches (high priority)
+      if (file.functions.some(fn => fn.name.toLowerCase().includes(keyword))) score += 8;
+      if (file.classes.some(cls => cls.name.toLowerCase().includes(keyword))) score += 8;
+      
+      // Content matches (lower priority)
+      const contentMatches = (content.match(new RegExp(keyword, 'g')) || []).length;
+      score += Math.min(contentMatches, 5); // Cap content matches
+      
+      // Import matches (medium priority)
+      if (file.imports.some(imp => imp.path.toLowerCase().includes(keyword))) score += 5;
+    });
+
+    return score;
+  }
+
+  private buildDependencyGraph(files: FileInfo[]): any {
+    const nodes = files.map(f => ({
+      id: f.relativePath,
+      type: f.language,
+      size: f.size,
+      functions: f.functions.length,
+      classes: f.classes.length,
+    }));
+
+    const edges: Array<{source: string; target: string; type: string}> = [];
+    
+    files.forEach(file => {
+      file.imports.forEach(imp => {
+        const targetFile = files.find(f => 
+          f.relativePath.includes(imp.path) || 
+          f.relativePath === imp.path + '.ts' ||
+          f.relativePath === imp.path + '.js'
+        );
+        
+        if (targetFile) {
+          edges.push({
+            source: file.relativePath,
+            target: targetFile.relativePath,
+            type: 'import'
+          });
+        }
+      });
+    });
+
+    return { nodes, edges };
+  }
+
+  private analyzeUsagePatterns(allFiles: FileInfo[], relevantFiles: FileInfo[]): any {
+    // Find common imports
+    const importCounts: Record<string, number> = {};
+    relevantFiles.forEach(file => {
+      file.imports.forEach(imp => {
+        importCounts[imp.path] = (importCounts[imp.path] || 0) + 1;
+      });
+    });
+
+    const commonImports = Object.entries(importCounts)
+      .map(([path, count]) => ({ import: path, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // Detect architectural patterns
+    const patterns: string[] = [];
+    const hasServices = relevantFiles.some(f => f.relativePath.includes('service'));
+    const hasComponents = relevantFiles.some(f => f.relativePath.includes('component'));
+    const hasUtils = relevantFiles.some(f => f.relativePath.includes('util') || f.relativePath.includes('helper'));
+    const hasModels = relevantFiles.some(f => f.relativePath.includes('model') || f.relativePath.includes('entity'));
+
+    if (hasServices) patterns.push('Service Layer');
+    if (hasComponents) patterns.push('Component Architecture');
+    if (hasUtils) patterns.push('Utility Functions');
+    if (hasModels) patterns.push('Data Models');
+
+    // Function usage patterns
+    const functionUsage: Record<string, number> = {};
+    relevantFiles.forEach(file => {
+      const content = file.content;
+      file.functions.forEach(fn => {
+        const usageCount = (content.match(new RegExp(fn.name, 'g')) || []).length;
+        if (usageCount > 1) { // More than just the definition
+          functionUsage[fn.name] = usageCount;
+        }
+      });
+    });
+
+    const functionUsagePatterns = Object.entries(functionUsage)
+      .map(([fn, count]) => ({ function: fn, usageCount: count, contexts: [] }))
+      .sort((a, b) => b.usageCount - a.usageCount)
+      .slice(0, 10);
+
+    return {
+      commonImports,
+      architecturalPatterns: patterns,
+      functionUsagePatterns,
+      classUsagePatterns: [] // Can be expanded later
     };
   }
 
-  async formatContextForFiles(files: FileInfo[]): Promise<string> {
+  async formatContextForFiles(files: FileInfo[], dependencyGraph?: any, usagePatterns?: any, query?: string): Promise<string> {
     if (!files || files.length === 0) {
-      return '# Empty Project Context\n\nNo files to analyze.';
+      return `# Empty Project Context\n\nNo relevant files found for query: "${query || 'unknown'}"`;
     }
 
     const sections: string[] = [];
     
     // Project Summary
-    sections.push('# Project Context Analysis');
+    sections.push('# Complete Project Context Analysis');
+    if (query) {
+      sections.push(`\n**Query:** ${query}`);
+    }
     sections.push('');
-    sections.push(this.generateContextSummary(files, {nodes: [], edges: []}, {
-      commonImports: [],
-      architecturalPatterns: [],
-      functionUsagePatterns: [],
-      classUsagePatterns: []
-    }));
+    sections.push(this.generateContextSummary(files, dependencyGraph, usagePatterns));
     sections.push('');
 
     // Architecture Overview
-    const dependencyGraph = { nodes: [], edges: [] };
-    const usagePatterns = { commonImports: [], architecturalPatterns: [], functionUsagePatterns: [], classUsagePatterns: [] };
-    sections.push('## Architecture Overview');
-    sections.push(this.formatArchitectureOverview(dependencyGraph, usagePatterns));
-    sections.push('');
+    if (dependencyGraph && usagePatterns) {
+      sections.push('## Architecture Overview');
+      sections.push(this.formatArchitectureOverview(dependencyGraph, usagePatterns));
+      sections.push('');
+    }
 
     // File Structure
-    sections.push('## File Structure');
+    sections.push('## Relevant Files Structure');
     for (const file of files) {
-      if (file.functions.length > 0 || file.classes.length > 0) {
-        sections.push(`### ${file.relativePath}`);
-        sections.push(`**Language:** ${file.language}`);
-        sections.push(`**Size:** ${file.size} bytes`);
-        
-        if (file.classes.length > 0) {
-          sections.push(`**Classes:** ${file.classes.map(c => c.name).join(', ')}`);
-        }
-        
-        if (file.functions.length > 0) {
-          sections.push(`**Functions:** ${file.functions.map(f => f.name).join(', ')}`);
-        }
-        
-        if (file.imports.length > 0) {
-          sections.push(`**Dependencies:** ${file.imports.map(i => i.path).join(', ')}`);
-        }
-        
-        sections.push('');
+      sections.push(`### ${file.relativePath}`);
+      sections.push(`**Language:** ${file.language}`);
+      sections.push(`**Size:** ${file.size} bytes`);
+      
+      if (file.classes.length > 0) {
+        sections.push(`**Classes:** ${file.classes.map(c => c.name).join(', ')}`);
       }
+      
+      if (file.functions.length > 0) {
+        sections.push(`**Functions:** ${file.functions.map(f => f.name).join(', ')}`);
+      }
+      
+      if (file.imports.length > 0) {
+        sections.push(`**Dependencies:** ${file.imports.map(i => i.path).join(', ')}`);
+      }
+      
+      sections.push('');
     }
 
     // File Contents
@@ -115,14 +357,18 @@ export class ContextBuilder {
     }
 
     // Dependency Relationships
-    sections.push('## Dependency Relationships');
-    sections.push(this.formatDependencyGraph(dependencyGraph));
-    sections.push('');
+    if (dependencyGraph) {
+      sections.push('## Dependency Relationships');
+      sections.push(this.formatDependencyGraph(dependencyGraph));
+      sections.push('');
+    }
 
     // Usage Patterns
-    sections.push('## Usage Patterns & Insights');
-    sections.push(this.formatUsagePatterns(usagePatterns));
-    sections.push('');
+    if (usagePatterns) {
+      sections.push('## Usage Patterns & Insights');
+      sections.push(this.formatUsagePatterns(usagePatterns));
+      sections.push('');
+    }
 
     return sections.join('\n');
   }
@@ -138,10 +384,13 @@ export class ContextBuilder {
       files.filter(f => f.language === prev.language).length ? current : prev
     ).language;
 
+    const graphInfo = dependencyGraph ? ` The dependency graph shows ${dependencyGraph.nodes.length} nodes and ${dependencyGraph.edges.length} relationships.` : '';
+    const patternsInfo = usagePatterns && usagePatterns.architecturalPatterns.length > 0 ? 
+      ` Key architectural patterns identified: ${usagePatterns.architecturalPatterns.join(', ')}.` : '';
+
     return `This context contains ${files.length} files with ${totalLines} total lines of code. ` +
-           `The primary language is ${primaryLanguage} with ${totalFunctions} functions and ${totalClasses} classes. ` +
-           `The dependency graph shows ${dependencyGraph.nodes.length} nodes and ${dependencyGraph.edges.length} relationships. ` +
-           `Key architectural patterns identified: ${usagePatterns.architecturalPatterns.join(', ')}.`;
+           `The primary language is ${primaryLanguage} with ${totalFunctions} functions and ${totalClasses} classes.` +
+           graphInfo + patternsInfo;
   }
 
   private formatArchitectureOverview(dependencyGraph: any, usagePatterns: any): string {
@@ -201,7 +450,7 @@ export class ContextBuilder {
     if (usagePatterns.functionUsagePatterns.length > 0) {
       sections.push('**Most Used Functions:**');
       for (const func of usagePatterns.functionUsagePatterns.slice(0, 10)) {
-        sections.push(`- ${func.function} (${func.usageCount} calls across ${func.contexts.length} files)`);
+        sections.push(`- ${func.function} (${func.usageCount} calls)`);
       }
       sections.push('');
     }

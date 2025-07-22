@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // Simple test to verify the MCP server functionality
-import { ProjectAnalyzer } from './src/analyzer.js';
-import { ContextBuilder } from './src/context-builder.js';
-import { ContextValidator } from './src/context-validator.js';
+import { ProjectAnalyzer } from './dist/analyzer.js';
+import { ContextBuilder } from './dist/context-builder.js';
+import { ContextValidator } from './dist/context-validator.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
