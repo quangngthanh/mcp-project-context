@@ -49,7 +49,7 @@ export interface FileInfo {
     isExported: boolean;
   }>;
   dependencies: string[];
-  language: 'typescript' | 'javascript' | 'python' | 'java' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'go' | 'rust' | 'swift' | 'kotlin' | 'scala' | 'clojure' | 'haskell' | 'ocaml' | 'vue' | 'svelte' | 'elm' | 'other';
+  language: 'typescript' | 'javascript' | 'python' | 'java' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'go' | 'rust' | 'swift' | 'kotlin' | 'scala' | 'clojure' | 'haskell' | 'ocaml' | 'vue' | 'svelte' | 'elm' | 'html' | 'css' | 'other';
 }
 
 export class ProjectAnalyzer {
@@ -62,25 +62,33 @@ export class ProjectAnalyzer {
     console.error(`Indexing project at: ${this.projectRoot}`);
 
     try {
-      // Universal patterns that work for any type of project
+      // Focused patterns for specific languages only
       const patterns = [
-        // Common source file extensions
-        '**/*.ts', '**/*.js', '**/*.tsx', '**/*.jsx',
-        '**/*.py', '**/*.java', '**/*.cpp', '**/*.c', '**/*.cs',
-        '**/*.php', '**/*.rb', '**/*.go', '**/*.rs', '**/*.swift',
-        '**/*.kt', '**/*.scala', '**/*.clj', '**/*.hs', '**/*.ml',
-        '**/*.vue', '**/*.svelte', '**/*.elm',
+        // Node.js/JavaScript/TypeScript
+        '**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx',
+        
+        // Backend languages  
+        '**/*.go',        // Golang
+        '**/*.php',       // PHP
+        '**/*.java',      // Java
+        '**/*.py',        // Python
+        
+        // Frontend files
+        '**/*.html', '**/*.htm',                      // HTML
+        '**/*.css', '**/*.scss', '**/*.sass',        // CSS
         
         // Configuration files
-        '**/*.json', '**/*.yaml', '**/*.yml', '**/*.toml', '**/*.ini',
+        '**/*.json', '**/*.yaml', '**/*.yml', '**/*.ini',
         '**/*.cfg', '**/*.conf', '**/*.config',
         
         // Documentation
-        '**/*.md', '**/*.txt', '**/*.rst', '**/*.adoc',
+        '**/*.md', '**/*.txt',
         
-        // Build and dependency files
-        '**/package.json', '**/requirements.txt', '**/pom.xml', '**/build.gradle',
-        '**/Cargo.toml', '**/go.mod', '**/composer.json', '**/Gemfile',
+        // Build and dependency files for focused languages
+        '**/package.json',      // Node.js
+        '**/go.mod',           // Go modules  
+        '**/pom.xml', '**/build.gradle',  // Java
+        '**/composer.json',    // PHP
         '**/Dockerfile', '**/docker-compose.yml', '**/Makefile',
         
         // IDE and editor configs
@@ -88,21 +96,16 @@ export class ProjectAnalyzer {
         
         // Exclude common build and cache directories
         '!**/node_modules/**',
-        '!**/.next/**', '!**/.nuxt/**', '!**/.svelte-kit/**',
+        '!**/.next/**', '!**/.nuxt/**',
         '!**/dist/**', '!**/build/**', '!**/target/**', '!**/out/**',
-        '!**/bin/**', '!**/obj/**', '!**/.build/**', '!**/build-aux/**',
+        '!**/bin/**', '!**/obj/**', '!**/.build/**',
         '!**/coverage/**', '!**/.nyc_output/**',
         '!**/.git/**', '!**/.svn/**', '!**/.hg/**',
-        '!**/vendor/**', '!**/bower_components/**',
+        '!**/vendor/**',
         '!**/.cache/**', '!**/.parcel-cache/**', '!**/.webpack/**',
-        '!**/public/vendor/**', '!**/static/vendor/**',
-        '!**/deploy/**', '!**/deployment/**',
-        '!**/.terraform/**', '!**/terraform.tfstate*',
-        '!**/__pycache__/**', '!**/*.pyc', '!**/*.pyo',
-        '!**/.pytest_cache/**', '!**/.mypy_cache/**',
         '!**/.gradle/**', '!**/gradle/**',
         '!**/.mvn/**', '!**/mvnw*',
-        '!**/Cargo.lock', '!**/package-lock.json', '!**/yarn.lock',
+        '!**/package-lock.json', '!**/yarn.lock',
         '!**/pnpm-lock.yaml', '!**/composer.lock',
         '!**/.DS_Store', '!**/Thumbs.db'
       ];
@@ -113,21 +116,16 @@ export class ProjectAnalyzer {
         dot: false,
         ignore: [
           '**/node_modules/**',
-          '**/.next/**', '**/.nuxt/**', '**/.svelte-kit/**',
+          '**/.next/**', '**/.nuxt/**',
           '**/dist/**', '**/build/**', '**/target/**', '**/out/**',
-          '**/bin/**', '**/obj/**', '**/.build/**', '**/build-aux/**',
+          '**/bin/**', '**/obj/**', '**/.build/**',
           '**/coverage/**', '**/.nyc_output/**',
           '**/.git/**', '**/.svn/**', '**/.hg/**',
-          '**/vendor/**', '**/bower_components/**',
+          '**/vendor/**',
           '**/.cache/**', '**/.parcel-cache/**', '**/.webpack/**',
-          '**/public/vendor/**', '**/static/vendor/**',
-          '**/deploy/**', '**/deployment/**',
-          '**/.terraform/**', '**/terraform.tfstate*',
-          '**/__pycache__/**', '**/*.pyc', '**/*.pyo',
-          '**/.pytest_cache/**', '**/.mypy_cache/**',
           '**/.gradle/**', '**/gradle/**',
           '**/.mvn/**', '**/mvnw*',
-          '**/Cargo.lock', '**/package-lock.json', '**/yarn.lock',
+          '**/package-lock.json', '**/yarn.lock',
           '**/pnpm-lock.yaml', '**/composer.lock',
           '**/.DS_Store', '**/Thumbs.db'
         ]
@@ -198,7 +196,7 @@ export class ProjectAnalyzer {
     }
   }
 
-  private detectLanguage(filePath: string): 'typescript' | 'javascript' | 'python' | 'java' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'go' | 'rust' | 'swift' | 'kotlin' | 'scala' | 'clojure' | 'haskell' | 'ocaml' | 'vue' | 'svelte' | 'elm' | 'other' {
+  private detectLanguage(filePath: string): 'typescript' | 'javascript' | 'python' | 'java' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'go' | 'rust' | 'swift' | 'kotlin' | 'scala' | 'clojure' | 'haskell' | 'ocaml' | 'vue' | 'svelte' | 'elm' | 'html' | 'css' | 'other' {
     const ext = path.extname(filePath).toLowerCase();
     switch (ext) {
       case '.ts': case '.tsx': return 'typescript';
@@ -221,6 +219,8 @@ export class ProjectAnalyzer {
       case '.vue': return 'vue';
       case '.svelte': return 'svelte';
       case '.elm': return 'elm';
+      case '.html': case '.htm': return 'html';
+      case '.css': case '.scss': case '.sass': return 'css';
       default: return 'other';
     }
   }

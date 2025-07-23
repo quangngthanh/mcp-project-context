@@ -13,19 +13,47 @@ export class FileWatcher {
       await this.watcher.close();
     }
 
-    // Create new watcher
-    this.watcher = chokidar.watch([
-      path.join(projectRoot, '**/*.ts'),
+    // Create focused patterns for specific languages only
+    const focusedPatterns = [
+      // Node.js/JavaScript/TypeScript
       path.join(projectRoot, '**/*.js'),
+      path.join(projectRoot, '**/*.jsx'), 
+      path.join(projectRoot, '**/*.ts'),
       path.join(projectRoot, '**/*.tsx'),
-      path.join(projectRoot, '**/*.jsx'),
-      path.join(projectRoot, '**/*.py'),
-      path.join(projectRoot, '**/*.json'),
-    ], {
+      
+      // Backend languages
+      path.join(projectRoot, '**/*.go'),       // Golang
+      path.join(projectRoot, '**/*.php'),      // PHP  
+      path.join(projectRoot, '**/*.java'),     // Java
+      path.join(projectRoot, '**/*.py'),     // Python
+      
+      // Frontend files
+      path.join(projectRoot, '**/*.html'),     // HTML
+      path.join(projectRoot, '**/*.htm'),      // HTML
+      path.join(projectRoot, '**/*.css'),      // CSS
+      path.join(projectRoot, '**/*.scss'),     // SCSS
+      path.join(projectRoot, '**/*.sass'),     // SASS
+      
+      // Config & Documentation files
+      path.join(projectRoot, '**/*.json'),     // JSON configs
+      path.join(projectRoot, '**/*.yaml'),     // YAML configs
+      path.join(projectRoot, '**/*.yml'),      // YAML configs
+      path.join(projectRoot, '**/*.ini'),      // INI configs
+      path.join(projectRoot, '**/*.cfg'),      // Config files
+      path.join(projectRoot, '**/*.conf'),     // Config files
+      path.join(projectRoot, '**/*.config'),   // Config files
+      path.join(projectRoot, '**/*.md'),       // Markdown
+      path.join(projectRoot, '**/*.txt'),      // Text files
+    ];
+
+    // Create new watcher with focused patterns
+    this.watcher = chokidar.watch(focusedPatterns, {
       ignored: [
         '**/node_modules/**',
         '**/dist/**',
         '**/build/**',
+        '**/target/**',        // Java build directory
+        '**/vendor/**',        // PHP vendor directory
         '**/.git/**',
         '**/coverage/**',
       ],
