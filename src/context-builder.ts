@@ -1,4 +1,6 @@
 import { FileInfo, ProjectAnalyzer } from './analyzer.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface CompleteContext {
   formattedContext: string;
@@ -37,6 +39,12 @@ export class ContextBuilder {
     try {
       console.error(`[ContextBuilder] Building context for query: "${options.query}"`);
       console.error(`[ContextBuilder] Project root: ${options.projectRoot}`);
+
+      const validation = validateProjectRoot(options.projectRoot);
+      if (!validation.valid) {
+        // Trả về lỗi cho AI hoặc user, dừng workflow
+        throw new Error(validation.message);
+      }
 
       // Step 1: Index the project
       await this.analyzer.indexProject(options.projectRoot);
@@ -590,4 +598,27 @@ export class ContextBuilder {
     
     return importantLines.join('\n');
   }
+}
+
+export function validateProjectRoot(projectRoot: string): { valid: boolean, message?: string } {
+  // Kiểm tra tồn tại và là thư mục
+  if (!fs.existsSync(projectRoot) || !fs.lstatSync(projectRoot).isDirectory()) {
+    return {
+      valid: false,
+      message: `❌ Không tìm thấy thư mục dự án hợp lệ tại đường dẫn: ${projectRoot}\n` +
+               `Vui lòng nhập lại đường dẫn chính xác tới thư mục gốc của dự án (projectRoot).`
+    };
+  }
+  // Kiểm tra có file mã nguồn không
+  const files = fs.readdirSync(projectRoot).filter(f =>
+    f.endsWith('.ts') || f.endsWith('.js') || f.endsWith('.jsx') || f.endsWith('.tsx')
+  );
+  if (files.length === 0) {
+    return {
+      valid: false,
+      message: `❌ Không tìm thấy file mã nguồn nào trong thư mục: ${projectRoot}\n` +
+               `Vui lòng kiểm tra lại thư mục mã nguồn.`
+    };
+  }
+  return { valid: true };
 }
