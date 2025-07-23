@@ -49,7 +49,7 @@ export interface FileInfo {
     isExported: boolean;
   }>;
   dependencies: string[];
-  language: 'typescript' | 'javascript' | 'python' | 'other';
+  language: 'typescript' | 'javascript' | 'python' | 'java' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'go' | 'rust' | 'swift' | 'kotlin' | 'scala' | 'clojure' | 'haskell' | 'ocaml' | 'vue' | 'svelte' | 'elm' | 'other';
 }
 
 export class ProjectAnalyzer {
@@ -57,24 +57,80 @@ export class ProjectAnalyzer {
   private projectRoot: string = '';
 
   async indexProject(projectRoot: string): Promise<void> {
-    this.projectRoot = projectRoot;
-    console.error(`Indexing project at: ${projectRoot}`);
+    // Normalize path for Windows compatibility
+    this.projectRoot = path.resolve(projectRoot);
+    console.error(`Indexing project at: ${this.projectRoot}`);
 
     try {
-      // Find all relevant source files
+      // Universal patterns that work for any type of project
       const patterns = [
+        // Common source file extensions
         '**/*.ts', '**/*.js', '**/*.tsx', '**/*.jsx',
-        '**/*.py', '**/*.json', '**/*.md',
-        '!node_modules/**',
-        '!dist/**', '!build/**',
-        '!coverage/**',
-        '!.git/**'
+        '**/*.py', '**/*.java', '**/*.cpp', '**/*.c', '**/*.cs',
+        '**/*.php', '**/*.rb', '**/*.go', '**/*.rs', '**/*.swift',
+        '**/*.kt', '**/*.scala', '**/*.clj', '**/*.hs', '**/*.ml',
+        '**/*.vue', '**/*.svelte', '**/*.elm',
+        
+        // Configuration files
+        '**/*.json', '**/*.yaml', '**/*.yml', '**/*.toml', '**/*.ini',
+        '**/*.cfg', '**/*.conf', '**/*.config',
+        
+        // Documentation
+        '**/*.md', '**/*.txt', '**/*.rst', '**/*.adoc',
+        
+        // Build and dependency files
+        '**/package.json', '**/requirements.txt', '**/pom.xml', '**/build.gradle',
+        '**/Cargo.toml', '**/go.mod', '**/composer.json', '**/Gemfile',
+        '**/Dockerfile', '**/docker-compose.yml', '**/Makefile',
+        
+        // IDE and editor configs
+        '**/.vscode/**', '**/.idea/**', '**/.editorconfig',
+        
+        // Exclude common build and cache directories
+        '!**/node_modules/**',
+        '!**/.next/**', '!**/.nuxt/**', '!**/.svelte-kit/**',
+        '!**/dist/**', '!**/build/**', '!**/target/**', '!**/out/**',
+        '!**/bin/**', '!**/obj/**', '!**/.build/**', '!**/build-aux/**',
+        '!**/coverage/**', '!**/.nyc_output/**',
+        '!**/.git/**', '!**/.svn/**', '!**/.hg/**',
+        '!**/vendor/**', '!**/bower_components/**',
+        '!**/.cache/**', '!**/.parcel-cache/**', '!**/.webpack/**',
+        '!**/public/vendor/**', '!**/static/vendor/**',
+        '!**/deploy/**', '!**/deployment/**',
+        '!**/.terraform/**', '!**/terraform.tfstate*',
+        '!**/__pycache__/**', '!**/*.pyc', '!**/*.pyo',
+        '!**/.pytest_cache/**', '!**/.mypy_cache/**',
+        '!**/.gradle/**', '!**/gradle/**',
+        '!**/.mvn/**', '!**/mvnw*',
+        '!**/Cargo.lock', '!**/package-lock.json', '!**/yarn.lock',
+        '!**/pnpm-lock.yaml', '!**/composer.lock',
+        '!**/.DS_Store', '!**/Thumbs.db'
       ];
 
       const files = await fastGlob(patterns, {
-        cwd: projectRoot,
+        cwd: this.projectRoot,
         absolute: true,
         dot: false,
+        ignore: [
+          '**/node_modules/**',
+          '**/.next/**', '**/.nuxt/**', '**/.svelte-kit/**',
+          '**/dist/**', '**/build/**', '**/target/**', '**/out/**',
+          '**/bin/**', '**/obj/**', '**/.build/**', '**/build-aux/**',
+          '**/coverage/**', '**/.nyc_output/**',
+          '**/.git/**', '**/.svn/**', '**/.hg/**',
+          '**/vendor/**', '**/bower_components/**',
+          '**/.cache/**', '**/.parcel-cache/**', '**/.webpack/**',
+          '**/public/vendor/**', '**/static/vendor/**',
+          '**/deploy/**', '**/deployment/**',
+          '**/.terraform/**', '**/terraform.tfstate*',
+          '**/__pycache__/**', '**/*.pyc', '**/*.pyo',
+          '**/.pytest_cache/**', '**/.mypy_cache/**',
+          '**/.gradle/**', '**/gradle/**',
+          '**/.mvn/**', '**/mvnw*',
+          '**/Cargo.lock', '**/package-lock.json', '**/yarn.lock',
+          '**/pnpm-lock.yaml', '**/composer.lock',
+          '**/.DS_Store', '**/Thumbs.db'
+        ]
       });
 
       console.error(`Found ${files.length} files to analyze`);
@@ -142,12 +198,29 @@ export class ProjectAnalyzer {
     }
   }
 
-  private detectLanguage(filePath: string): 'typescript' | 'javascript' | 'python' | 'other' {
+  private detectLanguage(filePath: string): 'typescript' | 'javascript' | 'python' | 'java' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'go' | 'rust' | 'swift' | 'kotlin' | 'scala' | 'clojure' | 'haskell' | 'ocaml' | 'vue' | 'svelte' | 'elm' | 'other' {
     const ext = path.extname(filePath).toLowerCase();
     switch (ext) {
       case '.ts': case '.tsx': return 'typescript';
       case '.js': case '.jsx': return 'javascript';
       case '.py': return 'python';
+      case '.java': return 'java';
+      case '.cpp': case '.cc': case '.cxx': case '.hpp': case '.hxx': return 'cpp';
+      case '.c': case '.h': return 'cpp';
+      case '.cs': return 'csharp';
+      case '.php': return 'php';
+      case '.rb': return 'ruby';
+      case '.go': return 'go';
+      case '.rs': return 'rust';
+      case '.swift': return 'swift';
+      case '.kt': return 'kotlin';
+      case '.scala': return 'scala';
+      case '.clj': case '.cljs': case '.cljc': return 'clojure';
+      case '.hs': return 'haskell';
+      case '.ml': case '.mli': return 'ocaml';
+      case '.vue': return 'vue';
+      case '.svelte': return 'svelte';
+      case '.elm': return 'elm';
       default: return 'other';
     }
   }
@@ -155,7 +228,7 @@ export class ProjectAnalyzer {
   private extractImports(content: string, language: string): Array<{path: string; imports: string[]; isDefault: boolean}> {
     const imports: Array<{path: string; imports: string[]; isDefault: boolean}> = [];
     
-    if (language === 'typescript' || language === 'javascript') {
+    if (language === 'typescript' || language === 'javascript' || language === 'vue' || language === 'svelte') {
       // Match ES6 imports
       const importRegex = /import\s+(?:(\w+)|{([^}]+)}|(\*\s+as\s+\w+))\s+from\s+['"]([^'"]+)['"];?/g;
       let match;
@@ -216,6 +289,96 @@ export class ProjectAnalyzer {
         imports.push({
           path: path.trim(),
           imports: items,
+          isDefault: false,
+        });
+      }
+    } else if (language === 'java') {
+      // Match Java imports
+      const importRegex = /^import\s+(?:static\s+)?([^;]+);/gm;
+      let match;
+      
+      while ((match = importRegex.exec(content)) !== null) {
+        const [, importPath] = match;
+        imports.push({
+          path: importPath.trim(),
+          imports: [importPath.split('.').pop() || importPath.trim()],
+          isDefault: false,
+        });
+      }
+    } else if (language === 'cpp' || language === 'csharp') {
+      // Match C++/C# includes and using statements
+      const includeRegex = /^#include\s+[<"]([^>"]+)[>"]/gm;
+      const usingRegex = /^using\s+([^;]+);/gm;
+      let match;
+      
+      while ((match = includeRegex.exec(content)) !== null) {
+        const [, includePath] = match;
+        imports.push({
+          path: includePath.trim(),
+          imports: [includePath.split('/').pop() || includePath.trim()],
+          isDefault: false,
+        });
+      }
+      
+      while ((match = usingRegex.exec(content)) !== null) {
+        const [, usingPath] = match;
+        imports.push({
+          path: usingPath.trim(),
+          imports: [usingPath.split('.').pop() || usingPath.trim()],
+          isDefault: false,
+        });
+      }
+    } else if (language === 'php') {
+      // Match PHP use statements
+      const useRegex = /^use\s+([^;]+);/gm;
+      let match;
+      
+      while ((match = useRegex.exec(content)) !== null) {
+        const [, usePath] = match;
+        imports.push({
+          path: usePath.trim(),
+          imports: [usePath.split('\\').pop() || usePath.trim()],
+          isDefault: false,
+        });
+      }
+    } else if (language === 'go') {
+      // Match Go imports
+      const importRegex = /^import\s+(?:\(([\s\S]*?)\)|"([^"]+)")/gm;
+      let match;
+      
+      while ((match = importRegex.exec(content)) !== null) {
+        const [, groupedImports, singleImport] = match;
+        
+        if (groupedImports) {
+          const importLines = groupedImports.split('\n').filter(line => line.trim());
+          for (const line of importLines) {
+            const importMatch = line.match(/"([^"]+)"/);
+            if (importMatch) {
+              imports.push({
+                path: importMatch[1].trim(),
+                imports: [importMatch[1].split('/').pop() || importMatch[1].trim()],
+                isDefault: false,
+              });
+            }
+          }
+        } else if (singleImport) {
+          imports.push({
+            path: singleImport.trim(),
+            imports: [singleImport.split('/').pop() || singleImport.trim()],
+            isDefault: false,
+          });
+        }
+      }
+    } else if (language === 'rust') {
+      // Match Rust use statements
+      const useRegex = /^use\s+([^;]+);/gm;
+      let match;
+      
+      while ((match = useRegex.exec(content)) !== null) {
+        const [, usePath] = match;
+        imports.push({
+          path: usePath.trim(),
+          imports: [usePath.split('::').pop() || usePath.trim()],
           isDefault: false,
         });
       }

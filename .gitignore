@@ -5,7 +5,6 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build output
-
 build/
 
 # Environment files
@@ -35,3 +34,6 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Bỏ thư mục dist khỏi git
+/dist/
