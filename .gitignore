@@ -37,3 +37,4 @@ logs/
 
 # Bỏ thư mục dist khỏi git
 /dist/
+/data
