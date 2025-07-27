@@ -47,7 +47,7 @@ export class ContextBuilder {
       }
 
       // Step 1: Index the project
-      await this.analyzer.indexProject(options.projectRoot);
+      await this.analyzer.indexProject(validation.normalizedPath!);
       const stats = await this.analyzer.getIndexStats();
       console.error(`[ContextBuilder] Indexed ${stats.filesIndexed} files`);
 
@@ -600,25 +600,159 @@ export class ContextBuilder {
   }
 }
 
-export function validateProjectRoot(projectRoot: string): { valid: boolean, message?: string } {
+/**
+ * Utility function để normalize và validate đường dẫn project
+ * Xử lý các trường hợp đường dẫn không chuẩn như URL encoding, relative paths, etc.
+ */
+export function normalizeProjectPath(rawPath: string): { 
+  normalizedPath: string; 
+  originalPath: string;
+  wasNormalized: boolean;
+  issues: string[];
+} {
+  const issues: string[] = [];
+  let normalizedPath = rawPath;
+  let wasNormalized = false;
+
+  // 1. Xử lý URL encoding (ví dụ: /d%3A/Working/...)
+  if (rawPath.includes('%')) {
+    try {
+      const decodedPath = decodeURIComponent(rawPath);
+      if (decodedPath !== rawPath) {
+        normalizedPath = decodedPath;
+        wasNormalized = true;
+        issues.push(`URL encoded path detected and decoded: ${rawPath} -> ${decodedPath}`);
+      }
+    } catch (error) {
+      issues.push(`Failed to decode URL encoded path: ${rawPath}`);
+    }
+  }
+
+  // 2. Xử lý file:// protocol
+  if (normalizedPath.startsWith('file://')) {
+    normalizedPath = normalizedPath.replace('file://', '');
+    wasNormalized = true;
+    issues.push(`Removed file:// protocol from path`);
+  }
+
+  // 3. Xử lý Windows path với forward slashes
+  if (process.platform === 'win32' && normalizedPath.includes('/')) {
+    // Chuyển forward slashes thành backslashes cho Windows
+    normalizedPath = normalizedPath.replace(/\//g, '\\');
+    wasNormalized = true;
+    issues.push(`Converted forward slashes to backslashes for Windows`);
+  }
+
+  // 4. Xử lý relative paths
+  if (!path.isAbsolute(normalizedPath)) {
+    try {
+      normalizedPath = path.resolve(process.cwd(), normalizedPath);
+      wasNormalized = true;
+      issues.push(`Converted relative path to absolute: ${rawPath} -> ${normalizedPath}`);
+    } catch (error) {
+      issues.push(`Failed to resolve relative path: ${normalizedPath}`);
+    }
+  }
+
+  // 5. Normalize đường dẫn (loại bỏ . và ..)
+  try {
+    const resolvedPath = path.resolve(normalizedPath);
+    if (resolvedPath !== normalizedPath) {
+      normalizedPath = resolvedPath;
+      wasNormalized = true;
+      issues.push(`Normalized path structure`);
+    }
+  } catch (error) {
+    issues.push(`Failed to normalize path: ${normalizedPath}`);
+  }
+
+  // 6. Xử lý các ký tự đặc biệt trong đường dẫn (chỉ cảnh báo, không block)
+  const specialChars = /[<>:"|?*]/;
+  if (specialChars.test(normalizedPath)) {
+    // Chỉ cảnh báo cho các ký tự thực sự có vấn đề, không phải dấu : trong Windows drive
+    const problematicChars = normalizedPath.match(/[<>"|?*]/g);
+    if (problematicChars) {
+      issues.push(`Path contains special characters that may cause issues: ${problematicChars.join(', ')}`);
+    }
+  }
+
+  return {
+    normalizedPath,
+    originalPath: rawPath,
+    wasNormalized,
+    issues
+  };
+}
+
+export function validateProjectRoot(projectRoot: string): { 
+  valid: boolean; 
+  message?: string;
+  normalizedPath?: string;
+  issues?: string[];
+} {
+  // Normalize đường dẫn trước khi validate
+  const pathInfo = normalizeProjectPath(projectRoot);
+  
+  // Log các vấn đề nếu có
+  if (pathInfo.issues.length > 0) {
+    console.error('[PathValidation] Issues found:', pathInfo.issues);
+  }
+
   // Kiểm tra tồn tại và là thư mục
-  if (!fs.existsSync(projectRoot) || !fs.lstatSync(projectRoot).isDirectory()) {
+  if (!fs.existsSync(pathInfo.normalizedPath)) {
     return {
       valid: false,
-      message: `❌ Không tìm thấy thư mục dự án hợp lệ tại đường dẫn: ${projectRoot}\n` +
-               `Vui lòng nhập lại đường dẫn chính xác tới thư mục gốc của dự án (projectRoot).`
+      message: `❌ Không tìm thấy thư mục dự án tại đường dẫn: ${projectRoot}\n` +
+               `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
+               `Vui lòng kiểm tra lại đường dẫn và đảm bảo thư mục tồn tại.`,
+      normalizedPath: pathInfo.normalizedPath,
+      issues: pathInfo.issues
     };
   }
+
+  if (!fs.lstatSync(pathInfo.normalizedPath).isDirectory()) {
+    return {
+      valid: false,
+      message: `❌ Đường dẫn không phải là thư mục: ${projectRoot}\n` +
+               `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
+               `Vui lòng nhập đường dẫn tới thư mục gốc của dự án.`,
+      normalizedPath: pathInfo.normalizedPath,
+      issues: pathInfo.issues
+    };
+  }
+
   // Kiểm tra có file mã nguồn không
-  const files = fs.readdirSync(projectRoot).filter(f =>
-    f.endsWith('.ts') || f.endsWith('.js') || f.endsWith('.jsx') || f.endsWith('.tsx')
-  );
-  if (files.length === 0) {
+  try {
+    const files = fs.readdirSync(pathInfo.normalizedPath).filter(f =>
+      f.endsWith('.ts') || f.endsWith('.js') || f.endsWith('.jsx') || f.endsWith('.tsx') ||
+      f.endsWith('.py') || f.endsWith('.java') || f.endsWith('.go') || f.endsWith('.php') ||
+      f.endsWith('.rb') || f.endsWith('.rs') || f.endsWith('.cpp') || f.endsWith('.cs')
+    );
+    
+    if (files.length === 0) {
+      return {
+        valid: false,
+        message: `❌ Không tìm thấy file mã nguồn nào trong thư mục: ${projectRoot}\n` +
+                 `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
+                 `Vui lòng kiểm tra lại thư mục mã nguồn.`,
+        normalizedPath: pathInfo.normalizedPath,
+        issues: pathInfo.issues
+      };
+    }
+  } catch (error) {
     return {
       valid: false,
-      message: `❌ Không tìm thấy file mã nguồn nào trong thư mục: ${projectRoot}\n` +
-               `Vui lòng kiểm tra lại thư mục mã nguồn.`
+      message: `❌ Không thể đọc thư mục: ${projectRoot}\n` +
+               `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
+               `Lỗi: ${error instanceof Error ? error.message : String(error)}`,
+      normalizedPath: pathInfo.normalizedPath,
+      issues: pathInfo.issues
     };
   }
-  return { valid: true };
+
+  return { 
+    valid: true,
+    normalizedPath: pathInfo.normalizedPath,
+    issues: pathInfo.issues
+  };
 }
