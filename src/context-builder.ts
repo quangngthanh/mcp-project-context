@@ -635,12 +635,29 @@ export function normalizeProjectPath(rawPath: string): {
     issues.push(`Removed file:// protocol from path`);
   }
 
-  // 3. Xử lý Windows path với forward slashes
-  if (process.platform === 'win32' && normalizedPath.includes('/')) {
-    // Chuyển forward slashes thành backslashes cho Windows
-    normalizedPath = normalizedPath.replace(/\//g, '\\');
-    wasNormalized = true;
-    issues.push(`Converted forward slashes to backslashes for Windows`);
+  // 3. Xử lý Windows path với forward slashes và drive letter
+  if (process.platform === 'win32') {
+    // Handle the specific case of URL-decoded Windows paths like /d:/path
+    if (normalizedPath.match(/^\/[a-zA-Z]:\//)) {
+      // Convert /d:/path to d:\path
+      normalizedPath = normalizedPath.replace(/^\/([a-zA-Z]):\//, '$1:\\');
+      wasNormalized = true;
+      issues.push(`Fixed URL-decoded Windows drive path: ${rawPath} -> ${normalizedPath}`);
+    }
+    // Handle the case where we have a leading slash but no drive letter (like /path)
+    else if (normalizedPath.startsWith('/') && !normalizedPath.startsWith('//')) {
+      // Remove leading slash for relative paths on Windows
+      normalizedPath = normalizedPath.substring(1);
+      wasNormalized = true;
+      issues.push(`Removed leading slash for Windows path`);
+    }
+    // Handle regular forward slashes in Windows paths
+    else if (normalizedPath.includes('/') && !normalizedPath.startsWith('//')) {
+      // Don't convert if it's a network path (starts with //)
+      normalizedPath = normalizedPath.replace(/\//g, '\\');
+      wasNormalized = true;
+      issues.push(`Converted forward slashes to backslashes for Windows`);
+    }
   }
 
   // 4. Xử lý relative paths
@@ -704,7 +721,8 @@ export function validateProjectRoot(projectRoot: string): {
       valid: false,
       message: `❌ Không tìm thấy thư mục dự án tại đường dẫn: ${projectRoot}\n` +
                `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
-               `Vui lòng kiểm tra lại đường dẫn và đảm bảo thư mục tồn tại.`,
+               `Vui lòng kiểm tra lại đường dẫn và đảm bảo thư mục tồn tại.\n` +
+               `Gợi ý: Đảm bảo đường dẫn chính xác và thư mục tồn tại trên hệ thống.`,
       normalizedPath: pathInfo.normalizedPath,
       issues: pathInfo.issues
     };
@@ -734,7 +752,8 @@ export function validateProjectRoot(projectRoot: string): {
         valid: false,
         message: `❌ Không tìm thấy file mã nguồn nào trong thư mục: ${projectRoot}\n` +
                  `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
-                 `Vui lòng kiểm tra lại thư mục mã nguồn.`,
+                 `Vui lòng kiểm tra lại thư mục mã nguồn.\n` +
+                 `Gợi ý: Đảm bảo đây là thư mục gốc của dự án chứa các file mã nguồn.`,
         normalizedPath: pathInfo.normalizedPath,
         issues: pathInfo.issues
       };
@@ -744,7 +763,8 @@ export function validateProjectRoot(projectRoot: string): {
       valid: false,
       message: `❌ Không thể đọc thư mục: ${projectRoot}\n` +
                `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
-               `Lỗi: ${error instanceof Error ? error.message : String(error)}`,
+               `Lỗi: ${error instanceof Error ? error.message : String(error)}\n` +
+               `Gợi ý: Kiểm tra quyền truy cập thư mục và đảm bảo đường dẫn chính xác.`,
       normalizedPath: pathInfo.normalizedPath,
       issues: pathInfo.issues
     };
