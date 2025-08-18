@@ -12,7 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { ProjectAnalyzer } from "./analyzer.js";
-import { ContextBuilder } from "./context-builder.js";
+import { ContextBuilder, FolderTreeMode } from "./context-builder.js";
 import { FileWatcher } from "./file-watcher.js";
 import { ContextValidator } from "./context-validator.js";
 
@@ -79,65 +79,31 @@ class ProjectContextServer {
                 type: "string",
                 description: "Root directory of the project to analyze",
               },
+              folderTreeMode: {
+                type: "string",
+                enum: ["directory_only", "full_analysis"],
+                description: "Folder tree mode: directory_only (for investigation) or full_analysis (complete view)",
+                default: "full_analysis",
+              },
             },
             required: ["query", "projectRoot"],
           },
         },
         {
-          name: "validate_context_completeness",
-          description: "Validate if provided context is complete for Claude understanding",
+          name: "get_folder_tree",
+          description: "Get folder tree with different modes: directory_only (for investigation) or full_analysis (complete view)",
           inputSchema: {
             type: "object",
             properties: {
-              context: {
-                type: "string",
-                description: "Context to validate for completeness",
-              },
-              query: {
-                type: "string", 
-                description: "Original query to validate context against",
-              },
-            },
-            required: ["context", "query"],
-          },
-        },
-        {
-          name: "get_dependency_graph",
-          description: "Get complete dependency graph for a code element",
-          inputSchema: {
-            type: "object",
-            properties: {
-              target: {
-                type: "string",
-                description: "Target code element (file path, function name, class name)",
-              },
               projectRoot: {
                 type: "string",
                 description: "Root directory of the project",
               },
-              includeTests: {
-                type: "boolean",
-                description: "Include test files in dependency graph",
-                default: true,
-              },
-            },
-            required: ["target", "projectRoot"],
-          },
-        },
-        {
-          name: "index_project",
-          description: "Index the entire project for faster context retrieval",
-          inputSchema: {
-            type: "object",
-            properties: {
-              projectRoot: {
+              mode: {
                 type: "string",
-                description: "Root directory of the project to index",
-              },
-              watchChanges: {
-                type: "boolean",
-                description: "Enable real-time file watching for updates",
-                default: true,
+                enum: ["directory_only", "full_analysis"],
+                description: "Tree mode: directory_only (only folders) or full_analysis (folders + files)",
+                default: "directory_only",
               },
             },
             required: ["projectRoot"],
@@ -178,12 +144,8 @@ class ProjectContextServer {
         switch (name) {
           case "get_complete_context":
             return await this.handleGetCompleteContext(args as any);
-          case "validate_context_completeness":
-            return await this.handleValidateContext(args as any);
-          case "get_dependency_graph":
-            return await this.handleGetDependencyGraph(args as any);
-          case "index_project":
-            return await this.handleIndexProject(args as any);
+          case "get_folder_tree":
+            return await this.handleGetFolderTree(args as any);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -249,6 +211,7 @@ class ProjectContextServer {
     completeness?: string;
     maxTokens?: number;
     projectRoot: string;
+    folderTreeMode?: string;
   }) {
     this.projectRoot = args.projectRoot;
 
@@ -273,6 +236,10 @@ class ProjectContextServer {
 ## Query: ${args.query}
 
 ## Context Completeness Score: ${validation.completenessScore}
+
+## Project Folder Structure
+
+${context.folderTree}
 
 ## Complete Context:
 
@@ -300,76 +267,17 @@ ${JSON.stringify(context.usagePatterns, null, 2)}
     };
   }
 
-  private async handleValidateContext(args: {
-    context: string;
-    query: string;
-  }) {
-    const validation = await this.validator.validateCompleteness({ formattedContext: args.context }, args.query);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(validation, null, 2),
-        },
-      ],
-    };
-  }
-
-  private async handleGetDependencyGraph(args: {
-    target: string;
+  private async handleGetFolderTree(args: {
     projectRoot: string;
-    includeTests?: boolean;
+    mode?: string;
   }) {
-    const graph = await this.analyzer.buildDependencyGraph(
-      args.target,
-      args.projectRoot,
-      args.includeTests || true
-    );
+    const folderTree = this.contextBuilder.generateFolderTree(args.projectRoot);
 
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(graph, null, 2),
-        },
-      ],
-    };
-  }
-
-  private async handleIndexProject(args: {
-    projectRoot: string;
-    watchChanges?: boolean;
-  }) {
-    this.projectRoot = args.projectRoot;
-    
-    // Index project
-    await this.analyzer.indexProject(args.projectRoot);
-    
-    // Setup file watching if requested
-    if (args.watchChanges) {
-      await this.fileWatcher.watch(args.projectRoot, (changedFiles) => {
-        // Re-index changed files
-        this.analyzer.reindexFiles(changedFiles);
-      });
-    }
-
-    const stats = await this.analyzer.getIndexStats();
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Project indexed successfully!
-          **Stats:**
-          - Files indexed: ${stats.filesIndexed}
-          - Functions found: ${stats.functionsFound}
-          - Classes found: ${stats.classesFound}
-          - Modules found: ${stats.modulesFound}
-          - Dependencies mapped: ${stats.dependenciesMapped}
-
-          **File watching**: ${args.watchChanges ? 'Enabled' : 'Disabled'}
-          `,
+          text: `# Folder Tree\n\nMode: ${args.mode || 'full_analysis'}\nProject Root: ${args.projectRoot}\n\n${folderTree}`,
         },
       ],
     };

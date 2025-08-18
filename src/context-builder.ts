@@ -13,6 +13,20 @@ export interface CompleteContext {
     estimatedTokens: number;
   };
   summary: string;
+  folderTree: string;
+}
+
+export interface FolderTreeNode {
+  name: string;
+  type: 'file' | 'directory';
+  path: string;
+  size?: number;
+  children?: FolderTreeNode[];
+}
+
+export enum FolderTreeMode {
+  DIRECTORY_ONLY = 'directory_only',
+  FULL_ANALYSIS = 'full_analysis'
 }
 
 export class ContextBuilder {
@@ -41,9 +55,32 @@ export class ContextBuilder {
       console.error(`[ContextBuilder] Project root: ${options.projectRoot}`);
 
       const validation = validateProjectRoot(options.projectRoot);
+      
+      // Always generate folder tree first, even if validation fails
+      console.error('[ContextBuilder] Generating folder tree...');
+      const folderTreeForError = this.generateFolderTree(validation.normalizedPath || options.projectRoot);
+      
       if (!validation.valid) {
-        // Trả về lỗi cho AI hoặc user, dừng workflow
-        throw new Error(validation.message);
+        // Return error with folder tree for investigation
+        return {
+          formattedContext: `# Error Building Context\n\nAn error occurred while building context for query: "${options.query}"\n\nError: ${validation.message}\n\nPlease check the project structure below and adjust accordingly.`,
+          metadata: {
+            totalFiles: 0,
+            totalLines: 0,
+            totalFunctions: 0,
+            totalClasses: 0,
+            primaryLanguage: 'unknown',
+            estimatedTokens: 100
+          },
+          summary: 'Error occurred during context building - check folder structure',
+          folderTree: folderTreeForError,
+          dependencyGraph: { nodes: [], edges: [] },
+          usagePatterns: { patterns: [] },
+          filesIncluded: [],
+          totalLines: 0,
+          compressionLevel: 'error',
+          tokenCount: 100
+        };
       }
 
       // Step 1: Index the project
@@ -59,16 +96,20 @@ export class ContextBuilder {
       const relevantFiles = this.findRelevantFiles(allFiles, options.query, options.scope);
       console.error(`[ContextBuilder] Found ${relevantFiles.length} relevant files`);
 
-      // Step 4: Build dependency graph
+      // Step 5: Generate folder tree
+      console.error('[ContextBuilder] Generating folder tree...');
+      const folderTree = this.generateFolderTree(validation.normalizedPath!);
+
+      // Step 6: Build dependency graph
       const dependencyGraph = await this.buildDependencyGraph(relevantFiles);
       
-      // Step 5: Analyze usage patterns
+      // Step 7: Analyze usage patterns
       const usagePatterns = this.analyzeUsagePatterns(allFiles, relevantFiles);
 
-      // Step 6: Format the complete context
-      const formattedContext = await this.formatContextForFiles(relevantFiles, dependencyGraph, usagePatterns, options.query);
+      // Step 8: Format the complete context
+      const formattedContext = await this.formatContextForFiles(relevantFiles, dependencyGraph, usagePatterns, options.query, folderTree);
 
-      // Step 7: Calculate metadata
+      // Step 9: Calculate metadata
       const totalLines = relevantFiles.reduce((sum, f) => sum + f.content.split('\n').length, 0);
       const totalFunctions = relevantFiles.reduce((sum, f) => sum + f.functions.length, 0);
       const totalClasses = relevantFiles.reduce((sum, f) => sum + f.classes.length, 0);
@@ -84,7 +125,7 @@ export class ContextBuilder {
 
       const estimatedTokens = this.estimateTokenCount(formattedContext);
       
-      // Step 8: Apply compression if needed
+      // Step 10: Apply compression if needed
       let finalContext = formattedContext;
       let compressionLevel = options.completeness || 'full';
       
@@ -108,6 +149,7 @@ export class ContextBuilder {
           estimatedTokens: finalTokenCount
         },
         summary: this.generateContextSummary(relevantFiles, dependencyGraph, usagePatterns),
+        folderTree,
         dependencyGraph,
         usagePatterns,
         filesIncluded: relevantFiles.map(f => f.relativePath),
@@ -119,24 +161,28 @@ export class ContextBuilder {
     } catch (error) {
       console.error('[ContextBuilder] Error building context:', error);
       
+      // Always try to generate folder tree for debugging
+      const folderTreeForError = this.generateFolderTree(options.projectRoot);
+      
       // Fallback response
       return {
-        formattedContext: `# Error Building Context\n\nAn error occurred while building context for query: "${options.query}"\n\nError: ${error instanceof Error ? error.message : String(error)}\n\nPlease check the project path and try again.`,
+        formattedContext: `# Error Building Context\n\nAn error occurred while building context for query: "${options.query}"\n\nError: ${error instanceof Error ? error.message : String(error)}\n\nPlease check the project structure below to understand the issue.`,
         metadata: {
           totalFiles: 0,
           totalLines: 0,
           totalFunctions: 0,
           totalClasses: 0,
           primaryLanguage: 'unknown',
-          estimatedTokens: 50
+          estimatedTokens: 100
         },
-        summary: 'Error occurred during context building',
+        summary: 'Error occurred during context building - check folder structure',
+        folderTree: folderTreeForError,
         dependencyGraph: { nodes: [], edges: [] },
         usagePatterns: { patterns: [] },
         filesIncluded: [],
         totalLines: 0,
         compressionLevel: 'error',
-        tokenCount: 50
+        tokenCount: 100
       };
     }
   }
@@ -308,7 +354,7 @@ export class ContextBuilder {
     };
   }
 
-  async formatContextForFiles(files: FileInfo[], dependencyGraph?: any, usagePatterns?: any, query?: string): Promise<string> {
+  async formatContextForFiles(files: FileInfo[], dependencyGraph?: any, usagePatterns?: any, query?: string, folderTree?: string): Promise<string> {
     if (!files || files.length === 0) {
       return `# Empty Project Context\n\nNo relevant files found for query: "${query || 'unknown'}"`;
     }
@@ -598,6 +644,156 @@ export class ContextBuilder {
     
     return importantLines.join('\n');
   }
+
+  public generateFolderTree(projectRoot: string): string {
+    const excludePatterns = [
+      // Dependencies and build directories
+      'node_modules', '.next', '.nuxt', 'dist', 'build', 'target', 'out',
+      '.venv', 'venv', '__pycache__', '.pytest_cache',
+      'vendor', 'composer.lock',
+      '.gradle', 'gradle',
+      
+      // IDE and editor
+      '.vscode', '.idea', '.vs', '.vscode-test',
+      
+      // Version control
+      '.git', '.svn', '.hg',
+      
+      // Cache and temp
+      '.cache', '.tmp', 'tmp', 'temp', '.temp',
+      'coverage', '.nyc_output',
+      
+      // OS generated
+      '.DS_Store', 'Thumbs.db', 'desktop.ini',
+      
+      // Logs
+      'logs', '*.log', 'npm-debug.log*', 'yarn-debug.log*', 'yarn-error.log*'
+    ];
+
+    const shouldExclude = (name: string): boolean => {
+      return excludePatterns.some(pattern => {
+        if (pattern.includes('*')) {
+          const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+          return regex.test(name);
+        }
+        return name === pattern || name.startsWith(pattern);
+      });
+    };
+
+    const buildTree = (dirPath: string, relativePath: string = '', depth: number = 0): FolderTreeNode | null => {
+      // Limit depth to prevent infinite recursion
+      if (depth > 10) return null;
+      
+      try {
+        const stat = fs.lstatSync(dirPath);
+        const name = path.basename(dirPath);
+        
+        // Skip excluded directories/files
+        if (shouldExclude(name)) {
+          return null;
+        }
+        
+        if (stat.isDirectory()) {
+          const children: FolderTreeNode[] = [];
+          try {
+            const items = fs.readdirSync(dirPath);
+            for (const item of items) {
+              const itemPath = path.join(dirPath, item);
+              const itemRelativePath = relativePath ? path.join(relativePath, item) : item;
+              const child = buildTree(itemPath, itemRelativePath, depth + 1);
+              if (child) {
+                children.push(child);
+              }
+            }
+          } catch (error) {
+            console.error(`[FolderTree] Cannot read directory ${dirPath}:`, error);
+            // Continue processing other directories even if one fails
+          }
+          
+          // Sort children: directories first, then files
+          children.sort((a, b) => {
+            if (a.type !== b.type) {
+              return a.type === 'directory' ? -1 : 1;
+            }
+            return a.name.localeCompare(b.name);
+          });
+          
+          return {
+            name,
+            type: 'directory',
+            path: relativePath || '.',
+            children
+          };
+        } else if (stat.isFile()) {
+          return {
+            name,
+            type: 'file',
+            path: relativePath,
+            size: stat.size
+          };
+        }
+      } catch (error) {
+        console.error(`[FolderTree] Cannot access ${dirPath}:`, error);
+        // Return a basic node showing the path exists but has access issues
+        return {
+          name: path.basename(dirPath),
+          type: 'directory',
+          path: relativePath || '.',
+          children: [{
+            name: '(Access denied or path not found)',
+            type: 'file',
+            path: 'error'
+          }]
+        };
+      }
+      
+      return null;
+    };
+
+    const formatTree = (node: FolderTreeNode, prefix: string = '', isLast: boolean = true): string => {
+      const lines: string[] = [];
+      const connector = isLast ? '└── ' : '├── ';
+      const icon = node.type === 'directory' ? '📁' : '📄';
+      const sizeInfo = node.type === 'file' && node.size ? ` (${this.formatFileSize(node.size)})` : '';
+      
+      lines.push(`${prefix}${connector}${icon} ${node.name}${sizeInfo}`);
+      
+      if (node.children && node.children.length > 0) {
+        const nextPrefix = prefix + (isLast ? '    ' : '│   ');
+        node.children.forEach((child, index) => {
+          const childIsLast = index === node.children!.length - 1;
+          lines.push(formatTree(child, nextPrefix, childIsLast));
+        });
+      }
+      
+      return lines.join('\n');
+    };
+
+    try {
+      // Always try to build tree, even if path validation failed earlier
+      if (!fs.existsSync(projectRoot)) {
+        return `📁 ${path.basename(projectRoot)}\n└── 📄 (Directory not found: ${projectRoot})`;
+      }
+      
+      const tree = buildTree(projectRoot);
+      if (!tree) {
+        return `📁 ${path.basename(projectRoot)}\n└── 📄 (No accessible files found)`;
+      }
+      
+      return formatTree(tree);
+    } catch (error) {
+      console.error('[FolderTree] Error generating folder tree:', error);
+      return `📁 ${path.basename(projectRoot)}\n└── 📄 (Error reading directory: ${error instanceof Error ? error.message : String(error)})`;
+    }
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
 }
 
 /**
@@ -739,25 +935,83 @@ export function validateProjectRoot(projectRoot: string): {
     };
   }
 
-  // Kiểm tra có file mã nguồn không
+  // FIX: Kiểm tra có file mã nguồn không - RECURSIVE CHECK
   try {
-    const files = fs.readdirSync(pathInfo.normalizedPath).filter(f =>
-      f.endsWith('.ts') || f.endsWith('.js') || f.endsWith('.jsx') || f.endsWith('.tsx') ||
-      f.endsWith('.py') || f.endsWith('.java') || f.endsWith('.go') || f.endsWith('.php') ||
-      f.endsWith('.rb') || f.endsWith('.rs') || f.endsWith('.cpp') || f.endsWith('.cs')
+    // Tìm các thư mục phổ biến chứa source code
+    const commonSourceDirs = ['src', 'lib', 'app', 'components', 'pages', 'api'];
+    const sourceExtensions = ['.ts', '.js', '.jsx', '.tsx', '.py', '.java', '.go', '.php', '.rb', '.rs', '.cpp', '.cs'];
+    
+    // 1. Check files ở root directory
+    const rootFiles = fs.readdirSync(pathInfo.normalizedPath).filter(f => {
+      const stat = fs.lstatSync(path.join(pathInfo.normalizedPath, f));
+      return stat.isFile() && sourceExtensions.some(ext => f.endsWith(ext));
+    });
+    
+    // 2. Check files trong common source directories  
+    let sourceFiles = [...rootFiles];
+    
+    for (const dir of commonSourceDirs) {
+      const sourceDirPath = path.join(pathInfo.normalizedPath, dir);
+      if (fs.existsSync(sourceDirPath) && fs.lstatSync(sourceDirPath).isDirectory()) {
+        try {
+          const dirFiles = fs.readdirSync(sourceDirPath).filter(f => {
+            const stat = fs.lstatSync(path.join(sourceDirPath, f));
+            return stat.isFile() && sourceExtensions.some(ext => f.endsWith(ext));
+          });
+          sourceFiles.push(...dirFiles.map(f => `${dir}/${f}`));
+        } catch (error) {
+          // Ignore errors reading subdirectories
+          console.error(`[PathValidation] Could not read ${dir} directory:`, error);
+        }
+      }
+    }
+    
+    // 3. Check project indicators (package.json, go.mod, etc.)
+    const projectIndicators = [
+      'package.json', 'go.mod', 'pom.xml', 'build.gradle', 'composer.json', 
+      'requirements.txt', 'Pipfile', 'Cargo.toml', 'tsconfig.json'
+    ];
+    
+    const hasProjectIndicators = projectIndicators.some(indicator => 
+      fs.existsSync(path.join(pathInfo.normalizedPath, indicator))
     );
     
-    if (files.length === 0) {
-      return {
-        valid: false,
-        message: `❌ Không tìm thấy file mã nguồn nào trong thư mục: ${projectRoot}\n` +
-                 `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
-                 `Vui lòng kiểm tra lại thư mục mã nguồn.\n` +
-                 `Gợi ý: Đảm bảo đây là thư mục gốc của dự án chứa các file mã nguồn.`,
+    // Nếu có project indicators thì coi như valid project ngay cả khi không tìm thấy source files
+    if (hasProjectIndicators) {
+      console.error(`[PathValidation] Found project indicators: ${projectIndicators.filter(i => 
+        fs.existsSync(path.join(pathInfo.normalizedPath, i))
+      ).join(', ')}`);
+      
+      if (sourceFiles.length === 0) {
+        console.error('[PathValidation] No source files found but project indicators present - proceeding');
+      }
+      
+      return { 
+        valid: true,
         normalizedPath: pathInfo.normalizedPath,
         issues: pathInfo.issues
       };
     }
+    
+    // Nếu không có source files và không có project indicators
+    if (sourceFiles.length === 0) {
+      return {
+        valid: false,
+        message: `❌ Không tìm thấy file mã nguồn nào trong thư mục: ${projectRoot}\n` +
+                 `Đường dẫn đã normalize: ${pathInfo.normalizedPath}\n` +
+                 `Đã kiểm tra:\n` +
+                 `- Root directory: ${rootFiles.length} files\n` +
+                 `- Common source dirs (${commonSourceDirs.join(', ')}): ${sourceFiles.length - rootFiles.length} files\n` +
+                 `- Project indicators: ${projectIndicators.filter(i => fs.existsSync(path.join(pathInfo.normalizedPath, i))).join(', ') || 'none'}\n` +
+                 `Vui lòng kiểm tra lại thư mục mã nguồn.\n` +
+                 `Gợi ý: Đảm bảo đây là thư mục gốc của dự án chứa các file mã nguồn hoặc file cấu hình dự án.`,
+        normalizedPath: pathInfo.normalizedPath,
+        issues: pathInfo.issues
+      };
+    }
+    
+    console.error(`[PathValidation] Found ${sourceFiles.length} source files:`, sourceFiles.slice(0, 5));
+    
   } catch (error) {
     return {
       valid: false,
